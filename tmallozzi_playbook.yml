@@ -1,3 +1,6 @@
+---
+  
+- name: tmallozzi_playbook.yml
 - hosts: localhost
   vars:
     digital_ocean_token: 8a71354eda9c7c7d34fc111a517bfb6bbc0eab4f17d03f738870d566aa6647a2
@@ -144,10 +147,10 @@
      - php-json
      state: latest
 
- - name: Install MySQL
-   pip:
-    name: mysql-community-server
-    state: latest
+  - name: Install MySQL
+    pip:
+     name: mysql-community-server
+     state: latest
 
   - name: Start MySQL
     service:
