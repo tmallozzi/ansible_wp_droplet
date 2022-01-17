@@ -1,0 +1,214 @@
+- hosts: localhost
+  vars:
+    digital_ocean_token: 8a71354eda9c7c7d34fc111a517bfb6bbc0eab4f17d03f738870d566aa6647a2
+    droplets:
+    - mallozzit-c2201-droplet1
+    - mallozzit-c2201-droplet2
+
+  tasks:
+
+  - name: Create SSH key
+    user:
+      name: "{{ ansible_user_id }}"
+      generate_ssh_key: yes
+      ssh_key_file: .ssh/id_rsa
+
+  - name: Create DigitalOcean SSH key
+    digital_ocean_sshkey:
+      state: present
+      command: ssh
+      name: mallozzit-c2201-key
+      ssh_pub_key: {{ lookup('file', '~/.ssh/id_rsa.pub') }}
+      oauth_token: "{{ digital_ocean_token }}"
+    register: my_ssh_key
+
+  - name: Create Droplets
+    digital_ocean_droplet:
+      state: present
+      command: droplet
+      name: {{ item }}
+      unique_name: yes
+      size: 512mb
+      region_id: nyc1
+      image_id: centos-7-64x
+      ssh_key_id: "{{ my_ssh_key.ssh_key.id }}"
+      api_token: "{{ digital_ocean_token }}"
+    with_items: "{{ droplets }}"
+    register: droplet_results
+
+ - name: Add droplets to Host File
+   add_host:
+     name: "{{ item.droplet.ip_address }}"
+     group: droplets
+   with_items: "{{ droplet_results.results }}"
+
+  - pause:
+      seconds: 75
+
+  - hosts: droplets
+   tasks:
+
+   #Disable SElinux
+   - name: Disable SElinux
+     selinux:
+       state: disabled
+
+   #Epel-Release
+   - name: Install epel-release
+     yum:
+       name: epel-release
+       state: present
+
+   - name: update
+     yum:
+       name: "*"
+       state: present
+
+  #Restart droplets
+  - name: Restart droplets
+    shell: sleep Z && shutdown -r now "Ansible boot"
+    async: 1
+    poll: 0
+    ignore_errors: True
+
+  - name: Wait for Droplets to restart
+    local_action:
+      module: wait_for
+        host{{ inventory_hostname }}
+        port=22
+        delay=15
+        timeout=300
+
+  #Install Apache
+  - name: Install Apache
+    yum:
+      name: httpd
+      state: latest
+
+   - name: enable service to start on boot up
+     service:
+       name: httpd
+      state: started
+
+   #Install MariaDB
+   - name: Install MariaDB
+     yum:
+       name: mariadb
+       state: latest
+
+  - name: Install MariaDB Server
+    service:
+      name: mariadb-server
+        state: latest
+        enabled: yes
+
+   - name: Check MariaDB Status
+     service:
+       name: mariadb
+       state: started
+
+   #Install Python
+   - name: Install Python2
+     yum:
+       name: python2
+       state: latest
+
+  - name: Install Python3
+    yum:
+      name: python3
+      state: latest
+
+ #Install PHP
+ - name: Install Remi Repository
+   yum:
+     name: https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+     state: present
+
+ - name: Install PHP
+   yum:
+     name: https://rpms.remirepo.net/enterprise/remi-release-7.rpm
+     state: present
+
+ - name: Install PHP
+   yum:
+     enablerepo: "remi,remi-php80"
+     name:
+     - php
+     - php-common
+     - php-cli
+     - php-gd
+     - php-curl
+     - php-mysqlnd
+     - php-fpm
+     - php-mysqli
+     - php-json
+     state: latest
+
+ - name: Install MySQL
+   pip:
+    name: mysql-community-server
+    state: latest
+
+  - name: Start MySQL
+    service:
+      name: mysqld
+      state: started
+      enabled: True
+
+  # Create MariaDB Database
+  - name: Create MariaDB Database
+    mysql_db:
+      name: wordpress
+      state: present
+
+ - name: Create MariaDB username & password
+    mysql_user:
+    name: wordpressuser
+    password: Fullsail1!
+    priv: "*.*:ALL,GRANT"
+    host: "localhost"
+    state: present
+
+ - name: Flush Privileges
+   command: 'mysql -ne "{{ item }}"'
+   with_items:
+     - FLUSH PRIVILEGES
+
+ - name: Restart MariaDB Database
+   service:
+     name: mariadb
+     state: restarted
+
+  # Install Wordpress
+  - name: Download  Wordpress
+    get_url:
+      url=http://wordpress.org/latest.tar.gz
+      dest=/tmp/wordpress.latest.tar.gz
+      validate_cert=no
+
+  - name: Unzip Wordpress
+    unarchive:
+       src=/tmp/wordpress-latest.tar.gz
+       dest=/var/www/html/
+       copy=no
+
+  - name: Retrieve Wordpress Config File from Git Repository
+    git:
+      repo: https://github.com/drosar1o/wp-config.git
+      dest: /var/www/github
+
+  - name: Move wp-config.php file to wordpress
+    command: mv /var/www/github/wp-config.php /var/www/html/wordpress/wp-config.php creates=/var/www/wordpress/wp-config.php
+
+  - name: Restart Apache
+    service: name=httpd state=restarted
+     become: yes
+
+  - name: Configure Wordpress directory permissions
+    command: find /var/www/html/wordpress/ -type d -exec chmod 750 {} \;
+
+  - name: Configure Wordpress file permissions
+    command: find /var/www/html/wordpress/ -type f -exec chmod 640 {} \;
+
+  - name: Restart Apache
+    service: name=httpd state=restarted
